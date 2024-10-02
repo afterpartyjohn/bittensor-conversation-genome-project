@@ -34,6 +34,7 @@ import numpy as np
 import tempfile
 import shutil
 import mmap
+from typing import Optional, Tuple
 
 
 import bittensor as bt
@@ -54,9 +55,100 @@ from conversationgenome.llm.LlmLib import LlmLib
 
 from conversationgenome.protocol import CgSynapse
 
+def normalize_max_weight(x: torch.Tensor, limit: float) -> torch.Tensor:
+    """
+    Normalizes the input tensor so that the sum is equal to 1 and the max value is limited.
+
+    Args:
+        x (torch.Tensor): Input tensor to normalize.
+        limit (float): The maximum allowed value for any element in the tensor.
+
+    Returns:
+        torch.Tensor: Normalized tensor.
+    """
+    if x.sum() > 0:
+        x = x / x.sum()
+    max_weight = x.max()
+    if max_weight > limit:
+        x = x * (limit / max_weight)
+    return x
+
+def process_weights_for_netuid(
+    uids: torch.Tensor,
+    weights: torch.Tensor,
+    netuid: int,
+    subtensor: "Subtensor",
+    metagraph: None,
+    exclude_quantile: int = 0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Processes weight tensors for a given subnet id using the provided weight and UID tensors,
+    applying constraints and normalization based on the subtensor and metagraph data.
+
+    Args:
+        uids (torch.Tensor): Tensor of unique identifiers of the neurons.
+        weights (torch.Tensor): Tensor of weights associated with the user IDs.
+        netuid (int): The network uid to process weights for.
+        subtensor (Subtensor): Subtensor instance to access blockchain data.
+        metagraph (Optional[Metagraph]): Metagraph instance for additional network data.
+            If None, it is fetched from the subtensor using the netuid.
+        exclude_quantile (int): Quantile threshold for excluding lower weights. Defaults to 0.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Tuple containing the tensor of user IDs and
+        the corresponding normalized weights.
+    """
+    # Get latest metagraph from chain if metagraph is None.
+    #if metagraph is None:
+        #metagraph = subtensor.metagraph(netuid)
+
+    # Ensure weights are float32
+    weights = weights.to(torch.float32)
+
+    # Network configuration parameters from subtensor
+    U16_MAX = 65535  # Constant for maximum value of uint16
+    quantile = exclude_quantile / U16_MAX
+    min_allowed_weights = 1
+    max_weight_limit = 65535
+
+    # Find all non-zero weights
+    non_zero_weight_idx = torch.nonzero(weights > 0).squeeze(dim=1)
+    non_zero_weight_uids = uids[non_zero_weight_idx]
+    non_zero_weights = weights[non_zero_weight_idx]
+
+    if non_zero_weights.numel() == 0 or 256 < min_allowed_weights:
+        logging.warning("No non-zero weights returning all ones.")
+        final_weights = torch.ones(256, "cuda") / 256
+        final_weights_count = torch.arange(len(final_weights), "cuda")
+        return final_weights_count, final_weights
+
+    elif non_zero_weights.numel() < min_allowed_weights:
+        logging.warning("Non-zero weights less than min allowed weight, returning all ones.")
+        weights = torch.ones(256, device="cuda") * 1e-5
+        weights[non_zero_weight_idx] += non_zero_weights
+        normalized_weights = normalize_max_weight(weights, max_weight_limit)
+        return torch.arange(len(normalized_weights), device="cuda"), normalized_weights
+
+    # Compute the exclude quantile and find the weights in the lowest quantile
+    max_exclude = max(0, len(non_zero_weights) - min_allowed_weights) / len(non_zero_weights)
+    exclude_quantile = min(quantile, max_exclude)
+    lowest_quantile = torch.quantile(non_zero_weights, exclude_quantile)
+
+    # Exclude all weights below the allowed quantile
+    mask = lowest_quantile <= non_zero_weights
+    non_zero_weight_uids = non_zero_weight_uids[mask]
+    non_zero_weights = non_zero_weights[mask]
+
+    # Normalize weights and return
+    normalized_weights = normalize_max_weight(non_zero_weights, max_weight_limit)
+    
+    return non_zero_weight_uids, normalized_weights
+
 
 
 def get_weights(scores,subtensor):
+    weight_time_zero = time.time()
+    #print("setting weights starting:")
     """
     Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
     """
@@ -69,32 +161,53 @@ def get_weights(scores,subtensor):
     # Calculate the average reward for each uid across non-zero values.
     # Replace any NaN values with 0.
     raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
+    weight_time_one = time.time()
+    #print(f"normalize raw weights took: {weight_time_one-weight_time_zero}")
 
-    print("raw_weights", raw_weights)
+    #print("raw_weights", raw_weights)
     #bt.logging.debug("raw_weight_uids", metagraph.uids.to("cpu"))
     # Process the raw weights to final_weights via subtensor limitations.
+    #(
+    #    processed_weight_uids,
+    #    processed_weights,
+    #) = bt.utils.weight_utils.process_weights_for_netuid(
+    #    uids=torch.arange(256, dtype=torch.int64).to("cuda"),
+    #    weights=raw_weights.to("cuda"),
+    #    netuid=33,
+    #    subtensor=subtensor,
+    #    metagraph=None
+    #)
+
+    #weight_time_two = time.time()
     (
         processed_weight_uids,
         processed_weights,
-    ) = bt.utils.weight_utils.process_weights_for_netuid(
+    ) = process_weights_for_netuid(
         uids=torch.arange(256, dtype=torch.int64).to("cuda"),
         weights=raw_weights.to("cuda"),
         netuid=33,
         subtensor=subtensor,
         metagraph=None
     )
-    print("processed_weights", processed_weights)
-    print("processed_weight_uids", processed_weight_uids)
+    #weight_time_local = time.time()
+    #print(f"local Process weights function took: {weight_time_local-weight_time_two}")
+
+    #weight_time_two = time.time()
+    #print(f"bt.utils.process_weights_for_netuid took: {weight_time_two-weight_time_local}")
+    #print("processed_weights", processed_weights)
+    #print("processed_weight_uids", processed_weight_uids)
 
     # Convert to uint16 weights and uids.
-    (
-        uint_uids,
-        uint_weights,
-    ) = bt.utils.weight_utils.convert_weights_and_uids_for_emit(
-        uids=processed_weight_uids, weights=processed_weights
-    )
-    bt.logging.debug("uint_weights", uint_weights)
-    bt.logging.debug("uint_uids", uint_uids)
+    #(
+    #    uint_uids,
+    #    uint_weights,
+    #) = bt.utils.weight_utils.convert_weights_and_uids_for_emit(
+    #    uids=processed_weight_uids, weights=processed_weights
+    #)
+    #weight_time_three = time.time()
+    #print(f"bt.utils.weight_utils.convert_weights_and_uids_for_emit took: {weight_time_three - weight_time_two}")
+    #bt.logging.debug("uint_weights", uint_weights)
+    #bt.logging.debug("uint_uids", uint_uids)
     
     #return the weights
 
@@ -261,13 +374,15 @@ def save_hash_to_score(hash_to_score):
         
         # Rename the temporary file to the target file
         shutil.move(temp_file_path, hash_score_file_path)
-        print(f"Successfully saved hash_to_score to {hash_score_file_path}")
+        #print(f"Successfully saved hash_to_score to {hash_score_file_path}")
     except Exception as e:
         print(f"Failed to save hash_to_score: {e}")
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
     
 async def check_hash(hash_input_string, hash_to_score, tags):
+    hash_lookup_starttime = time.time()
+    print(f"STARTING HASH LOOKUP on dictionary length: {len(hash_to_score)}")
     if not (hash_input_string) or not tags:
         print("error with hash input string")
         return None
@@ -299,8 +414,8 @@ async def check_hash(hash_input_string, hash_to_score, tags):
         else:
             print("vector retrieval failed")
             return None
-    
-    #print(f"in check has, vectors= {vectors}")
+    finish_time = time.time()
+    print(f"HASH LOOKUP TOOK: {finish_time-hash_lookup_starttime} SECONDS")
 
     return vectors
     
@@ -391,7 +506,7 @@ async def main():
     i=0
 
     # Initialize a dictionary to store the hash to score mapping
-    hash_score_file_path = os.path.abspath('hash_to_score.pkl')  # Ensure the file path is absolute
+    hash_score_file_path = os.path.abspath('hash_to_score_20241002_231636.pkl')  # Ensure the file path is absolute
     hash_to_score = {}
     hash_to_score = load_hash_to_score(hash_score_file_path)
 
@@ -401,7 +516,7 @@ async def main():
     stakes = load_stakes_file(stakes_file_path)
 
 
-    #isolate desired rows from Subnet Data spreadsheet 
+    #isolate desired rows from Subnet Data spreadsheet
     
     validator_rows = []
     miner_index = {}
@@ -456,7 +571,10 @@ async def main():
 
         # get 3 miners at a time with matching keyref until all miners with that keyref have been queried (simulating Windows)
         three_miners = []
+        start_time = time.time()
         for miner_row in miner_index[keyref]:
+            print("starting new miner window")
+            time_zero= time.time()
 
             #confirm that it is a miner and they were given same convo
             if miner_row['type'] == 'miner' and miner_row['keyRef'] == keyref:
@@ -467,12 +585,15 @@ async def main():
 
                 #add to current "window" simulation
                 three_miners.append(miner_row)
+                time_two = time.time()
+                print(f"Found miner {miner_row['hotkey']} at index {len(three_miners)} in {time_two-time_zero} seconds")
 
                 #when window is full, score all of them
                 if len(three_miners) == 3:
 
                     miner_uids = []
                     # loop through and generate vectors for each
+                    find_vector_start_time = time.time()
                     for miner in three_miners:
                         
                         #generate List from csv String
@@ -490,14 +611,18 @@ async def main():
                             print("Error in Check Hash - Miner")
                             continue
 
-                        #save hash to score data
-                        save_hash_to_score(hash_to_score)
-
                         miner['uid'] = all_miners.index(miner['hotkey'])
                         miner_uids.append(miner['uid'])
 
                         if not miner['vectors']or miner['vectors']== {}:
                             print(f"Didn't find Miner Vectors")
+
+                    time_three = time.time()
+                    print(f"Generated Three miner vectors in {time_three-find_vector_start_time} seconds")
+
+                    #save hash to score data
+                    save_hash_to_score(hash_to_score)
+
 
                     # GET SCORES
                     final_scores = await el.mock_evaluate(full_convo_metadata, three_miners)
@@ -521,6 +646,8 @@ async def main():
                     #get updated validator score and ema_score tensors
                     (new_scores, new_ema_scores) = update_scores(rank_scores_tensor, miner_uids_tensor, validators[current_validator_hotkey].scores, validators[current_validator_hotkey].ema_scores)
                     
+                    time_four = time.time()
+                    print(f"Scored and updated scores {time_four-time_three} seconds")
                     #update current validator's data
                     validators[current_validator_hotkey].scores = new_scores
                     validators[current_validator_hotkey].ema_scores = new_ema_scores
@@ -530,10 +657,16 @@ async def main():
         save_hash_to_score(hash_to_score)
         backup_pickle_file("hash_to_score.pkl")
 
+        time_five = time.time()
+        print(f"Scored and updated scores {time_five-time_four} seconds")
+
         # Get and set validator weights
         (new_weight_uids,new_weights) = get_weights(validators[current_validator_hotkey].scores,subtensor)
         for uid, weight in zip(new_weight_uids, new_weights):
             validators[current_validator_hotkey].weights[uid] = weight
+
+        time_six = time.time()
+        print(f"set weights: {time_six-time_five} seconds")
 
         i += 1
         if i % 5 == 0:
