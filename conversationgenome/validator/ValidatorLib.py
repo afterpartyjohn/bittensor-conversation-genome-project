@@ -284,6 +284,7 @@ class ValidatorLib:
 
 
     def update_scores(self, rewards, uids, ema_scores, scores, moving_average_alpha, device, neurons, nonlinear_power):
+        device = "cuda"
         # NaN handling and UID tensor preparation (unchanged)
         if torch.isnan(rewards).any():
             if self.verbose:
@@ -293,10 +294,10 @@ class ValidatorLib:
         if isinstance(uids, torch.Tensor):
             uids_tensor = uids.clone().detach()
         else:
-            uids_tensor = torch.tensor(uids, dtype=torch.long, device=device)
+            uids_tensor = torch.tensor(uids, dtype=torch.long, device="cuda")
 
-        uids_tensor = uids_tensor.to(scores.device)
-        rewards = rewards.to(scores.device)
+        uids_tensor = uids_tensor.to(device)
+        rewards = rewards.to(device)
 
         # Scatter rewards
         scattered_rewards: torch.FloatTensor = ema_scores.scatter(

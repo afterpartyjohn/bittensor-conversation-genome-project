@@ -77,8 +77,8 @@ def get_weights(scores,subtensor):
         processed_weight_uids,
         processed_weights,
     ) = bt.utils.weight_utils.process_weights_for_netuid(
-        uids=torch.arange(256, dtype=torch.int64),
-        weights=raw_weights.to("cpu"),
+        uids=torch.arange(256, dtype=torch.int64).to("cuda"),
+        weights=raw_weights.to("cuda"),
         netuid=33,
         subtensor=subtensor,
         metagraph=None
@@ -111,6 +111,11 @@ def update_scores(rewards: torch.FloatTensor, uids, scores, ema_scores):
     #print(f"\n\n in update_scores.")
     #print(f"\n\n rewards: {rewards}")
     #print(f"\n\n uids: {uids}")
+
+    rewards = rewards.to("cuda")
+    uids = uids.to("cuda")
+    scores = scores.to("cuda")
+    ema_scores = ema_scores.to("cuda")
 
 
     vl = ValidatorLib()
@@ -255,7 +260,7 @@ def save_hash_to_score(hash_to_score):
             pickle.dump(hash_to_score, temp_file)
         
         # Rename the temporary file to the target file
-        os.replace(temp_file_path, hash_score_file_path)
+        shutil.move(temp_file_path, hash_score_file_path)
         print(f"Successfully saved hash_to_score to {hash_score_file_path}")
     except Exception as e:
         print(f"Failed to save hash_to_score: {e}")
@@ -400,7 +405,7 @@ async def main():
     
     validator_rows = []
     miner_index = {}
-    csv_file_path = '../output.csv'
+    csv_file_path = './output.csv'
     with open(csv_file_path, 'r', newline='') as csvfile:
         csv_reader = csv.DictReader(csvfile)
         for row in csv_reader:
@@ -510,8 +515,11 @@ async def main():
                     #reset three_miners as this is no longer needed
                     three_miners = []
 
+
+                    rank_scores_tensor = torch.tensor(rank_scores, dtype=torch.float32).to("cuda")  # Move to GPU
+                    miner_uids_tensor = torch.tensor(miner_uids, dtype=torch.int64).to("cuda")  # Move to GPU
                     #get updated validator score and ema_score tensors
-                    (new_scores, new_ema_scores) = update_scores(rank_scores, miner_uids, validators[current_validator_hotkey].scores, validators[current_validator_hotkey].ema_scores)
+                    (new_scores, new_ema_scores) = update_scores(rank_scores_tensor, miner_uids_tensor, validators[current_validator_hotkey].scores, validators[current_validator_hotkey].ema_scores)
                     
                     #update current validator's data
                     validators[current_validator_hotkey].scores = new_scores
@@ -531,7 +539,7 @@ async def main():
         if i % 5 == 0:
             print(f"Processed {i} rows so far.")
             
-        if i>400:
+        if i>1600:
             print("exiting now")
             break
         
