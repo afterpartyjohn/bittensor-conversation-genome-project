@@ -212,8 +212,7 @@ class Evaluator:
                 final_miner_score = await self.calculate_penalty(uid, adjusted_score, total_tag_count, len(unique_tags), min_score, max_score)
                 final_scores.append({"uid": idx+1, "uuid": uuid, "hotkey": hotkey, "adjustedScore":adjusted_score, "final_miner_score":final_miner_score})
                 bt.logging.debug(f"_______ ADJ SCORE: {adjusted_score} ___Num Tags: {len(miner_result['tags'])} Unique Tag Scores: {scores_unique} Median score: {median_score} Mean score: {mean_score} Top 3 Mean: {top_3_mean} Min: {min_score} Max: {max_score}" )
-
-        bt.logging.debug(f"Complete evaluation. Final scores:\n{pprint.pformat(final_scores, indent=2)}")
+       
         # Force to use cuda if available -- otherwise, causes device mismatch
         try:
             rank_scores = rank_scores.to('cuda')
@@ -222,11 +221,117 @@ class Evaluator:
         # Convert to tensors
         if  len(final_scores) != len(rank_scores):
             bt.logging.error(f"ERROR: final scores length ({len(final_scores)})  doesn't match rank scores ({len(rank_scores)}). Aborting.")
-            return (None, None)
+            return (None)
 
-        for idx, final_score in enumerate(final_scores):
-            rank_scores[idx] = final_scores[idx]['final_miner_score']
-        return (final_scores, rank_scores)
+        return final_scores
+    
+
+    async def mock_evaluate(self, full_convo_metadata=None, miner_responses=None, body=None, exampleList=None, verbose=None, scoring_factors=None):
+        if verbose == None:
+            verbose = self.verbose
+        final_scores = []
+        now = datetime.now(timezone.utc)
+
+        full_conversation_neighborhood = await self.calculate_semantic_neighborhood(full_convo_metadata)
+        if verbose:
+            bt.logging.info("full_conversation_neighborhood vector count: ", len(full_conversation_neighborhood))
+
+        num_responses = len(miner_responses)
+        scores = torch.zeros(num_responses)
+        zero_score_mask = torch.ones(num_responses)
+        rank_scores = torch.zeros(num_responses)
+        #bt.logging.info(f"DEVICE for rank_scores: {rank_scores.device}")
+
+        avg_ages = torch.zeros(num_responses)
+        avg_age_scores = torch.zeros(num_responses)
+        uniqueness_scores = torch.zeros(num_responses)
+        credit_author_scores = torch.zeros(num_responses)
+
+        max_avg_age = 0
+
+        spot_check_id_dict = dict()
+
+
+        final_scores = []
+        for idx, response in enumerate(miner_responses):
+            # TODO: Testing framework returns just response. Make it return cgp_output
+            uuid = "uuid-"+str(idx)
+            hotkey = "hk-uuid"
+            try:
+                uuid = response.axon.uuid
+                hotkey = response.axon.hotkey
+            except:
+                pass
+            if not response:
+                if verbose:
+                    bt.logging.error(f"BAD RESPONSE EVAL: miner index: {idx} HOTKEY: {response.axon.hotkey}")
+                final_scores.append({"uuid": uuid, "hotkey": hotkey, "adjustedScore":0.0, "final_miner_score":0.0})
+            else:
+                #bt.logging.info("GOOD RESPONSE", idx, response.axon.uuid, response.axon.hotkey, )
+                miner_result = response
+                try:
+                    # Make sure there are enough tags to make processing worthwhile
+                    if miner_result is None or not miner_result or len(miner_result['tags']) < self.min_tags:
+                        bt.logging.info(f"Only {len(miner_result['tags'])} tag(s) found for miner {miner_result['uid']}. Skipping.")
+                        final_scores.append({"uuid": uuid, "hotkey": hotkey, "adjustedScore":0.0, "final_miner_score":0.0})
+                        zero_score_mask[idx] = 0
+                        continue
+                except Exception as e:
+                    bt.logging.error(f"Error while intitial checking {idx}-th response: {e}, 0 score")
+                    bt.logging.debug(print_exception(type(e), e, e.__traceback__))
+                    zero_score_mask[idx] = 0
+
+                # Loop through tags that match the full convo and get the scores for those
+                results = await self.calc_scores(full_convo_metadata, full_conversation_neighborhood, miner_result)
+
+                (scores, scores_both, scores_unique, diff) = results
+                mean_score = np.mean(scores)
+                median_score = np.median(scores)
+                min_score = np.min(scores)
+                max_score = np.max(scores)
+                std = np.std(scores)
+                sorted_unique_scores = np.sort(scores_unique)
+                sorted_scores = np.sort(scores)
+                top_3_sorted_unique_scores = sorted_unique_scores[-3:]
+                if len(top_3_sorted_unique_scores) == 1:
+                    num1 = np.float64(0.0)
+                    num2 = np.float64(0.0)
+                    top_3_sorted_unique_scores = np.append(top_3_sorted_unique_scores, num1)
+                    top_3_sorted_unique_scores = np.append(top_3_sorted_unique_scores, num2)
+                elif len(top_3_sorted_unique_scores) == 2:
+                    num1 = np.float64(0.0)
+                    top_3_sorted_unique_scores = np.append(top_3_sorted_unique_scores, num1)
+                top_3_mean = np.mean(top_3_sorted_unique_scores)
+
+                if not scoring_factors:
+                    scoring_factors = self.scoring_factors
+                adjusted_score = (
+                    (scoring_factors['top_3_mean'] * top_3_mean)+
+                    (scoring_factors['median_score'] * median_score) +
+                    (scoring_factors['mean_score'] * mean_score) +
+                    (scoring_factors['max_score'] * max_score)
+                )
+
+                final_miner_score = adjusted_score #await calculate_penalty(adjusted_score,both ,unique, min_score, max_score)
+                both_tags = diff['both']
+                unique_tags = diff['unique_2']
+                total_tag_count = len(both_tags) + len(unique_tags)
+                uid = Utils.get(miner_result, 'uid')
+                final_miner_score = await self.calculate_penalty(uid, adjusted_score, total_tag_count, len(unique_tags), min_score, max_score)
+                final_scores.append({"uid": idx+1, "uuid": uuid, "hotkey": hotkey, "adjustedScore":adjusted_score, "final_miner_score":final_miner_score})
+                bt.logging.debug(f"_______ ADJ SCORE: {adjusted_score} ___Num Tags: {len(miner_result['tags'])} Unique Tag Scores: {scores_unique} Median score: {median_score} Mean score: {mean_score} Top 3 Mean: {top_3_mean} Min: {min_score} Max: {max_score}" )
+       
+        # Force to use cuda if available -- otherwise, causes device mismatch
+        try:
+            rank_scores = rank_scores.to('cuda')
+        except:
+            pass
+        # Convert to tensors
+        if  len(final_scores) != len(rank_scores):
+            bt.logging.error(f"ERROR: final scores length ({len(final_scores)})  doesn't match rank scores ({len(rank_scores)}). Aborting.")
+            return (None)
+
+        return final_scores
 
     async def calc_scores(self, full_convo_metadata, full_conversation_neighborhood, miner_result):
         full_convo_tags = full_convo_metadata['tags']

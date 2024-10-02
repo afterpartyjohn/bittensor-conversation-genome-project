@@ -63,6 +63,11 @@ class LlmLib:
         return response
 
     async def get_vector_embeddings_set(self, tags):
+        if not self.factory_llm:
+            self.factory_llm = await self.generate_llm_instance()
+            if not self.factory_llm:
+                bt.logging.error("LLM not found. Aborting conversation_to_metadata.")
+                return
         response = await self.factory_llm.get_vector_embeddings_set(tags)
         return response
 
