@@ -268,7 +268,7 @@ class MockValidator():
     
 
 def process_and_plot_validators(validators, rows_processed, interval, start_time):
-    if rows_processed % interval != 0 :
+    if rows_processed % interval != 0 or validator is None or len(validators) ==0:
         return
 
     # Convert the dictionary to a list if needed
@@ -507,6 +507,7 @@ def load_hash_to_score(hash_score_file_path):
 
 async def main():
     import ast
+    interval= 100
     subtensor= bt.subtensor(network="finney")
     metagraph=subtensor.metagraph(netuid=33)
     graph_time = time.time()
@@ -684,7 +685,6 @@ async def main():
         i += 1
         if i % 5 == 0:
             print(f"Processed {i} rows so far.")
-        interval= 100
         process_and_plot_validators(validators, i, interval, graph_time)
             
         if i>1600:
@@ -693,7 +693,7 @@ async def main():
         
 
     # graph individual validator weight curves
-    process_and_plot_validators(validators,validators, i, interval, graph_time)
+    process_and_plot_validators(validators, i, interval, graph_time)
 
 
 if __name__ == "__main__":
