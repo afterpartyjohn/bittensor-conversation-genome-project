@@ -268,7 +268,7 @@ class MockValidator():
     
 
 def process_and_plot_validators(validators, rows_processed, interval, start_time):
-    if rows_processed % interval != 0 or validator is None or len(validators) ==0:
+    if rows_processed % interval != 0 or validators is None or len(validators) ==0:
         return
 
     # Convert the dictionary to a list if needed
