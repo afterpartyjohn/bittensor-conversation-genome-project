@@ -267,7 +267,10 @@ class MockValidator():
         return self.__str__()
     
 
-def process_and_plot_validators(validators):
+def process_and_plot_validators(validators, rows_processed, interval, start_time):
+    if rows_processed % interval != 0 :
+        return
+
     # Convert the dictionary to a list if needed
     validator_list = list(validators.values())
 
@@ -326,7 +329,7 @@ def process_and_plot_validators(validators):
         plt.plot(sorted_weights, marker='o', linestyle='-', color='b')
         plt.xlabel('Index')
         plt.ylabel('Weight Value')
-        plt.title('Validator Weights in Ascending Order')
+        plt.title(f"Weight distro for vali: {validator.hotkey} RP: {rows_processed}")
         plt.grid(True)
 
     # Calculate the overall stake-weighted average for each index
@@ -342,25 +345,20 @@ def process_and_plot_validators(validators):
     plt.xlabel('Index')
     plt.ylabel('Stake-weighted Average Value')
     plt.title('Final Stake-weighted Averages')
-    plt.grid(True)
-    plt.show()
+    # Create parent folder with start time
+    parent_folder = f"validator_weights_{start_time}"
+    os.makedirs(parent_folder, exist_ok=True)
 
-    # Calculate the overall stake-weighted average for each index
-    stake_weighted_averages = weighted_sums / total_stake if total_stake != 0 else np.zeros_like(weighted_sums)
-    print(f"Overall stake-weighted averages: {stake_weighted_averages}")
-    print(f"\n\n LENGTH OF SWA TABLE {len(stake_weighted_averages)}\n\n")
-    
-    # Order the stake-weighted averages in ascending order
-    sorted_stake_weighted_averages = sorted(stake_weighted_averages)
-    
-    # Plot the sorted stake-weighted averages
-    plt.figure(figsize=(10, 6))
-    plt.plot(sorted_stake_weighted_averages, marker='o', linestyle='-', color='g')
-    plt.xlabel('Index')
-    plt.ylabel('Stake-weighted Average Value')
-    plt.title('Final Stake-weighted Averages')
-    plt.grid(True)
-    plt.show()
+    # Create subfolder for the current number of rows processed
+    subfolder = os.path.join(parent_folder, f"{rows_processed} Rows")
+    os.makedirs(subfolder, exist_ok=True)
+
+    # Save all open figures to the subfolder
+    for i in plt.get_fignums():
+        plt.figure(i)
+        plot_file_path = os.path.join(subfolder, f"weights_plot_{rows_processed}_{i}.png")
+        plt.savefig(plot_file_path)
+        plt.close(i)
 
 
 def save_hash_to_score(hash_to_score):
@@ -509,6 +507,8 @@ async def main():
     import ast
     subtensor= bt.subtensor(network="finney")
     metagraph=subtensor.metagraph(netuid=33)
+    graph_time = time.time()
+    print(f"Process started at: {datetime.fromtimestamp(graph_time).strftime('%Y-%m-%d %H:%M:%S')}")
 
     validators = {}  # Use a dictionary for O(1) lookup
     el = Evaluator()
@@ -682,6 +682,8 @@ async def main():
         i += 1
         if i % 5 == 0:
             print(f"Processed {i} rows so far.")
+        interval= 100
+        process_and_plot_validators(validators, i, interval, graph_time)
             
         if i>1600:
             print("exiting now")
@@ -689,7 +691,7 @@ async def main():
         
 
     # graph individual validator weight curves
-    process_and_plot_validators(validators)
+    process_and_plot_validators(validators,validators, i, interval, graph_time)
 
 
 if __name__ == "__main__":
