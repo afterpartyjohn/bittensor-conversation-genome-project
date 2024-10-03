@@ -466,10 +466,15 @@ def load_stakes_file(stakes_file_path):
 
 def backup_pickle_file(file_path):
     backup_dir = os.path.join(os.path.dirname(file_path), 'backups')
-    backup_files = sorted(
-        [f for f in os.listdir(backup_dir) if os.path.isfile(os.path.join(backup_dir, f))],
-        key=lambda x: os.path.getctime(os.path.join(backup_dir, x))
-    )
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_file = []
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir, exist_ok=True)
+    else:
+        backup_files = sorted(
+            [f for f in os.listdir(backup_dir) if os.path.isfile(os.path.join(backup_dir, f))],
+            key=lambda x: os.path.getctime(os.path.join(backup_dir, x))
+        ) 
 
     # Check if there are more than 5 files and delete the least recent
     if len(backup_files) > 5:
