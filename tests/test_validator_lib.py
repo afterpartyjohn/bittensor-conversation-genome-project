@@ -68,7 +68,7 @@ async def test_full():
         full_conversation_tag_count = len(tags)
         lines = Utils.get(full_conversation, "lines", [])
         participants = Utils.get(full_conversation, "participants", [])
-        miners_per_window = c.get("validator", "miners_per_window", 6)
+        miners_per_window = c.get("validator", "miners_per_window", 12)
         min_lines = c.get("convo_window", "min_lines", 5)
         max_lines = c.get("convo_window", "max_lines", 50)
         overlap_lines = c.get("convo_window", "overlap_lines", 2)
