@@ -55,7 +55,7 @@ class Validator(BaseValidatorNeuron):
         try:
             wl = WandbLib()
 
-            miners_per_window = c.get("validator", "miners_per_window", 3)
+            miners_per_window = c.get("validator", "miners_per_window", 12)
             miner_sample_size = min(self.config.neuron.sample_size, self.metagraph.n.item())
             bt.logging.debug(f"miner_sample_size: {miner_sample_size}, {self.config.neuron.sample_size}, {self.metagraph.n.item()}")
             batch_num = random.randint(100000, 9999999)
@@ -95,7 +95,7 @@ class Validator(BaseValidatorNeuron):
                 full_conversation_tag_count = len(full_convo_tags)
                 lines = Utils.get(full_conversation, "lines", [])
                 participants = Utils.get(full_conversation, "participants")
-                miners_per_window = c.get("validator", "miners_per_window", 3)
+                miners_per_window = c.get("validator", "miners_per_window", 12)
                 min_lines = c.get("convo_window", "min_lines", 5)
                 max_lines = c.get("convo_window", "max_lines", 10)
                 overlap_lines = c.get("convo_window", "overlap_lines", 2)
