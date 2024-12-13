@@ -16,7 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import sys
-import torch
+import numpy as np
 import unittest
 import bittensor as bt
 
@@ -89,8 +89,8 @@ class TemplateValidatorNeuronTestCase(unittest.TestCase):
         )
 
         rewards = get_rewards(self.neuron, responses)
-        expected_rewards = torch.FloatTensor([1.0] * len(responses))
-        self.assertEqual(rewards, expected_rewards)
+        expected_rewards = np.ones(len(responses))
+        np.testing.assert_array_equal(rewards, expected_rewards)
 
     def test_reward_with_nan(self):
         # TODO: Test that NaN rewards are correctly sanitized
@@ -105,7 +105,7 @@ class TemplateValidatorNeuronTestCase(unittest.TestCase):
         )
 
         rewards = get_rewards(self.neuron, responses)
-        expected_rewards = rewards.clone()
+        expected_rewards = rewards.copy()
         # Add NaN values to rewards
         rewards[0] = float("nan")
 

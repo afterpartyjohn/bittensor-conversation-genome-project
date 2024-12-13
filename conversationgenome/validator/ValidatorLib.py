@@ -6,7 +6,6 @@ import asyncio
 import math
 import os
 import numpy as np
-import torch
 
 
 from conversationgenome.utils.Utils import Utils
@@ -34,7 +33,6 @@ try:
 except Exception as e:
     print("Wand error")
 
-# TODO: Refactor to multiple participants. Make abstract class?
 proto = {
     "interests_of_q": [],
     "hobbies_of_q": [],
@@ -46,7 +44,7 @@ proto = {
 
 
 class ValidatorLib:
-    mode = "test" # test|local_llm|openai|anthropic
+    mode = "test"
     hotkey = "v1234"
     verbose = False
     llml = None
@@ -58,7 +56,6 @@ class ValidatorLib:
     async def reserve_conversation(self, minConvWindows = 1, batch_num=None):
         import time
         out = None
-        # Validator requests a full conversation from the API
         full_conversation = await self.getConvo()
         if self.verbose:
             bt.logging.info("full_conversation", full_conversation)
@@ -75,7 +72,6 @@ class ValidatorLib:
 
             bt.logging.info(f"Reserved conversation ID: {conversation_guid} with {num_lines} lines. Sending to {llm_type}:{model} LLM...")
 
-            # Do overview tagging and generate base participant profiles
             full_conversation_metadata = await self.generate_full_convo_metadata(full_conversation)
             if not full_conversation_metadata:
                 bt.logging.error(f"ERROR:927402. No metadata for conversation returned to validator. Aborting.")
@@ -91,10 +87,8 @@ class ValidatorLib:
             if not Utils.empty(log_path):
                 Utils.append_log(log_path, f"Validator found full convo tags {full_conversation_tags} in FullConvo")
 
-            # Make sure there are enough tags to make processing worthwhile
             minValidTags = self.validateMinimumTags(full_conversation_tags)
             if minValidTags:
-                # Break the full conversation up into overlapping conversation windows
                 convoWindows = self.getConvoWindows(full_conversation)
                 if len(convoWindows) > minConvWindows:
                     out = (full_conversation, full_conversation_metadata, convoWindows)
@@ -104,8 +98,6 @@ class ValidatorLib:
             else:
                 bt.logging.info("Not enough valid tags for conversation. Passing.")
                 out = None
-            #await self.end_log_wandb(conversation_guid)
-            #return None
             return out
         else:
             bt.logging.error(f"ERROR:9879432: No conversation returned from API. Aborting.")
@@ -132,11 +124,9 @@ class ValidatorLib:
         if len(windows) < 2:
             windows = Utils.split_overlap_array(fullConvo['lines'], size=minLines, overlap=overlapLines)
 
-        # TODO: Write convo windows into local database with full convo metadata
         return windows
 
     async def filter_valid_tags(self, tags):
-        # Filter valid tags
         return tags
 
 
@@ -181,12 +171,9 @@ class ValidatorLib:
         return results
 
     def validateMinimumTags(self, tags):
-        # TODO: Validate tags
-        #bt.logging.info("Validating tags", tags)
         return True
 
     def selectStage1Miners(self, uids, num=3):
-        # TODO: Move to MockBt
         selectedMiners = random.sample(uids, num)
         return selectedMiners
 
@@ -203,31 +190,20 @@ class ValidatorLib:
             bt.logging.info("full_conversationTagVectors", full_conversationTagVectors)
         vectorNeightborhood = []
         for key, full_conversationTagVector in full_conversationTagVectors.items():
-            #bt.logging.info("full_conversationTagVector", key, full_conversationTagVector)
             vectorNeightborhood.append(full_conversationTagVector['vectors'])
-            #bt.logging.info("num vectors", len(full_conversationTagVector['vectors']))
 
-        #bt.logging.info("vectorNeightborhood LEN", len(vectorNeightborhood))
         semantic_neighborhood = np.mean(vectorNeightborhood, axis=0)
-        #bt.logging.info("Full convo semantic_neighborhood", semantic_neighborhood)
 
         if self.verbose:
             bt.logging.info("Full convo tags", full_conversationTags)
 
-        # Loop through rows in db
         success = True
         for idx, window in enumerate(windows):
-            # Pick initial minors
             minersPerWindow = c.get("validator", "miners_per_window", 3)
             uids = [1,2,3,4,5,6,7,8,9]
             miners = self.selectStage1Miners(uids, minersPerWindow)
-            # Send first window to miners
             miner_results = await self.send_to_miners(conversation_guid, idx, window, miners)
-            #bt.logging.info("Miner results", minerResults)
-            # TODO: Each miner returns data, write data into local db
-            # TODO: Write up incomplete errors, such as if timeout happens for miner, send to another miner
 
-            # When all miners have returned data for convo window, score compared to full convo tags
             for minerResult in minerResults:
                 uid = Utils.get(minerResult, 'uid')
                 tags = Utils.get(minerResult, 'tags')
@@ -237,7 +213,6 @@ class ValidatorLib:
                 compareResults = Utils.compare_arrays(full_conversationTags, tags)
                 compareResults['total_1'] = len(full_conversationTags)
                 compareResults['total_2'] = len(tags)
-                #bt.logging.info("COMPARE", compareResults)
                 scoreToFullConvo = await self.calculate_base_score(compareResults)
                 minerResult['score'] = scoreToFullConvo
                 similarity_scores = []
@@ -246,15 +221,9 @@ class ValidatorLib:
                     for unique_tag in uniqueTags:
                         if unique_tag in vectors:
                             tagVectors = vectors[unique_tag]['vectors']
-                            #bt.logging.info("VECTOR", unique_tag, tagVectors[0:2])
-                            # similarity_score
-                            #  0 = orthogonal (perpendicular), no similarity
-                            #  1 = identical in orientation, maximum similarity
-                            # -1 = diametrically opposed, maximum dissimilarity
                             similarity_score = 0
                             if not Utils.is_empty_vector(tagVectors):
                                 similarity_score = np.dot(semantic_neighborhood, tagVectors) / (np.linalg.norm(semantic_neighborhood) * np.linalg.norm(tagVectors))
-                                #bt.logging.info(f"Similarity score between the content and the tag '{unique_tag}': {similarity_score}")
                             similarity_scores.append(similarity_score)
                     bt.logging.info("MEDIAN similarity_score of %d unique tags for miner %s" % (len(uniqueTags), str(uid)), np.median(similarity_scores), similarity_scores)
                 else:
@@ -265,7 +234,6 @@ class ValidatorLib:
             rewards = {}
             for minerResult in minerResults:
                 rewards[minerResult['uid']] = minerResult['reward']
-            # Send emissions
             await self.outputEmissions(1, idx, rewards)
 
         if success == True:
@@ -283,48 +251,32 @@ class ValidatorLib:
         await llml.test_tagging()
 
 
-    def update_scores(self, rewards, uids, ema_scores, scores, moving_average_alpha, device, neurons, nonlinear_power):
-        # NaN handling and UID tensor preparation (unchanged)
-        if torch.isnan(rewards).any():
-            if self.verbose:
-                bt.logging.warning(f"NaN values detected in rewards: {rewards}")
-            rewards = torch.nan_to_num(rewards, 0)
+    def update_scores(self, rewards, uids, ema_scores, scores, moving_average_alpha, neurons, nonlinear_power):
+        if len(uids) == 0:
+            return scores, ema_scores
 
-        if isinstance(uids, torch.Tensor):
-            uids_tensor = uids.clone().detach()
+        rewards = np.array(rewards)
+        rewards = np.nan_to_num(rewards, 0.0)
+        rewards = np.clip(rewards, 0.0, 1.0)
+
+        scattered_rewards = np.zeros_like(ema_scores)
+        for i, uid in enumerate(uids):
+            scattered_rewards[uid] = rewards[i]
+
+        ema_scores = (1 - moving_average_alpha) * ema_scores + moving_average_alpha * scattered_rewards
+
+        if np.sum(ema_scores) > 0:
+            normalized_scores = ema_scores / np.sum(ema_scores)
         else:
-            uids_tensor = torch.tensor(uids, dtype=torch.long, device=device)
+            normalized_scores = np.ones_like(ema_scores) / neurons
 
-        uids_tensor = uids_tensor.to(scores.device)
-        rewards = rewards.to(scores.device)
+        transformed_scores = np.power(normalized_scores, nonlinear_power)
 
-        # Scatter rewards
-        scattered_rewards: torch.FloatTensor = ema_scores.scatter(
-            0, uids_tensor, rewards
-        ).to(device)
-
-        # Update EMA scores
-        alpha: float = moving_average_alpha
-        ema_scores = alpha * scattered_rewards + (1 - alpha) * ema_scores
-
-        # Normalize EMA scores
-        sum_scores = torch.sum(ema_scores)
-        if sum_scores > 0:
-            normalized_scores = ema_scores / sum_scores
+        if np.sum(transformed_scores) > 0:
+            scores = transformed_scores / np.sum(transformed_scores)
         else:
-            normalized_scores = torch.ones_like(ema_scores) / neurons
+            scores = np.ones_like(transformed_scores) / neurons
 
-        # Apply non-linear transformation
-        transformed_scores = torch.pow(normalized_scores, nonlinear_power)
-
-        # Renormalize
-        sum_transformed = torch.sum(transformed_scores)
-        if sum_transformed > 0:
-            scores = transformed_scores / sum_transformed
-        else:
-            scores = torch.ones_like(transformed_scores) / neurons
-
-        bt.logging.debug(f"Updated final scores: {scores}")
         return scores, ema_scores
 
     async def prompt_call_csv(self, convoXmlStr=None, participants=None, override_prompt=None):
@@ -337,7 +289,6 @@ class ValidatorLib:
             print("Original tag set len: %d clean tag set len: %d" % (len(originalTagList), len(cleanTagList)))
         cleanTagsStr = ",".join(cleanTagList)
 
-        # Tag validation prompt
         prompt1 = "Separate these keywords into 2 groups: good English keywords and malformed keywords. Malformed keywords should include combined/compound words that are not in the English Dictionary, abbreviations, and typos. Return two comma-delimited lists."
         prompt1 += "\n\n<keywords>\n%s\n</keywords>\n\n" % (cleanTagsStr)
 

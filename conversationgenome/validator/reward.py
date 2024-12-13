@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import torch
+import numpy as np
 import bittensor as bt
 from typing import List
 import editdistance
@@ -138,7 +138,7 @@ def sort_predictions(labels: List[dict], predictions: List[dict], draw=False) ->
 
     # First, make sure that the predictions is at least as long as the image data
     predictions += [{}] * (len(labels) - len(predictions))
-    r = torch.zeros((len(labels), len(predictions)))
+    r = np.zeros((len(labels), len(predictions)))
     for i in range(r.shape[0]):
         for j in range(r.shape[1]):
             r[i,j] = section_reward(labels[i], predictions[j])['total']
@@ -188,7 +188,7 @@ def reward(self, labels: List[dict], response: CgSynapse) -> float:
         section_reward(label, pred, verbose=True, alpha_f=alpha_f, alpha_p=alpha_p, alpha_t=alpha_t)
         for label, pred in zip(labels, predictions)
     ]
-    prediction_reward = torch.mean(torch.FloatTensor([reward['total'] for reward in section_rewards]))
+    prediction_reward = np.mean([reward['total'] for reward in section_rewards])
     time_reward = 1
     #time_reward = max(1 - response.time_elapsed / self.config.neuron.timeout, 0)
     print("TOTALREWARD", alpha_prediction, prediction_reward,  alpha_time, time_reward)
@@ -205,18 +205,18 @@ def get_rewards(
     self,
     labels: List[dict],
     responses: List[CgSynapse],
-) -> torch.FloatTensor:
+) -> np.ndarray:
     """
-    Returns a tensor of rewards for the given image and responses.
+    Get rewards for a batch of responses.
 
     Args:
-    - image (List[dict]): The true data underlying the image sent to the miner.
-    - responses (List[CgSynapse]): A list of responses from the miner.
+    - labels (List[dict]): The true data underlying the image sent to the miners.
+    - responses (List[CgSynapse]): List of responses from the miners.
 
     Returns:
-    - torch.FloatTensor: A tensor of rewards for the given image and responses.
+    - np.ndarray: A tensor of rewards for the given image and responses.
     """
     # Get all the reward results by iteratively calling your reward() function.
-    return torch.FloatTensor(
+    return np.array(
         [reward(self, labels, response) for response in responses]
-    ).to(self.device)
+    )
