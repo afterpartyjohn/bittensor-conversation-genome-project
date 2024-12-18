@@ -1,40 +1,87 @@
 """
 Twitter API v2 wrapper for internal usage
-Provides basic tweet management functionality using Twitter API v2
+Implements OAuth 2.0 authentication and basic tweet management functionality
 """
 
 import os
-import json
+import base64
+import secrets
+import hashlib
 import requests
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from current directory or parent directory
 load_dotenv()
+if not os.getenv('TWITTER_CLIENT_ID'):
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+# Required OAuth 2.0 credentials
+TWITTER_CLIENT_ID = os.getenv('TWITTER_CLIENT_ID')
+TWITTER_CLIENT_SECRET = os.getenv('TWITTER_CLIENT_SECRET')
+TWITTER_REDIRECT_URI = os.getenv('TWITTER_REDIRECT_URI', 'http://localhost:8080/callback')
+
+def generate_code_verifier():
+    token = secrets.token_urlsafe(32)
+    return token
+
+def generate_code_challenge(verifier):
+    sha256 = hashlib.sha256(verifier.encode('utf-8')).digest()
+    return base64.urlsafe_b64encode(sha256).decode('utf-8').rstrip('=')
 
 class TwitterApiLib:
     """Twitter API v2 wrapper for internal usage"""
 
     def __init__(self, verbose: bool = False):
-        """Initialize Twitter API client with credentials from environment"""
+        """Initialize Twitter API client with OAuth 2.0 credentials"""
         self.verbose = verbose
-        self.api_key = os.getenv('TWITTER_API_KEY')
-        self.api_secret = os.getenv('TWITTER_API_SECRET')
-        self.access_token = os.getenv('TWITTER_ACCESS_TOKEN')
-        self.access_token_secret = os.getenv('TWITTER_ACCESS_TOKEN_SECRET')
+        self.client_id = TWITTER_CLIENT_ID
+        self.client_secret = TWITTER_CLIENT_SECRET
+        self.redirect_uri = TWITTER_REDIRECT_URI
 
-        if not all([self.api_key, self.api_secret, self.access_token, self.access_token_secret]):
-            raise ValueError("Missing required Twitter API credentials in environment")
+        if not all([self.client_id, self.client_secret]):
+            raise ValueError("Missing required Twitter API credentials")
 
-        self.base_url = "https://api.twitter.com/2"
+        # Generate PKCE values
+        self.code_verifier = generate_code_verifier()
+        self.code_challenge = generate_code_challenge(self.code_verifier)
 
-    def _get_auth_header(self) -> Dict[str, str]:
-        """Generate OAuth 1.0a authorization header"""
-        return {
-            "Authorization": f"OAuth oauth_consumer_key=\"{self.api_key}\", "
-                           f"oauth_token=\"{self.access_token}\"",
-            "Content-Type": "application/json"
+        # Get access token
+        self.access_token = self._get_access_token()
+
+    def _get_access_token(self) -> str:
+        """
+        Get OAuth 2.0 access token using client credentials flow
+        Returns the access token as a string
+        """
+        # Basic auth header
+        auth = base64.b64encode(
+            f"{self.client_id}:{self.client_secret}".encode()
+        ).decode()
+
+        headers = {
+            'Authorization': f'Basic {auth}',
+            'Content-Type': 'application/x-www-form-urlencoded'
         }
+
+        data = {
+            'grant_type': 'client_credentials',
+            'scope': 'tweet.write offline.access'
+        }
+
+        response = requests.post(
+            'https://api.twitter.com/2/oauth2/token',
+            headers=headers,
+            data=data
+        )
+
+        if self.verbose:
+            print(f"Token response: {response.text}")
+
+        if response.status_code != 200:
+            raise Exception(f"Failed to get access token: {response.text}")
+
+        return response.json()['access_token']
 
     def create_tweet(self, text: str) -> Dict[str, Any]:
         """
@@ -49,57 +96,44 @@ class TwitterApiLib:
         Raises:
             requests.exceptions.RequestException: If the API request fails
         """
-        url = f"{self.base_url}/tweets"
+        url = 'https://api.twitter.com/2/tweets'
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Content-Type': 'application/json'
+        }
+        data = {'text': text}
 
-        try:
-            response = requests.post(
-                url,
-                headers=self._get_auth_header(),
-                json={"text": text},
-                timeout=30
-            )
+        response = requests.post(url, headers=headers, json=data)
+        if self.verbose:
+            print(f"Create tweet response: {response.text}")
 
-            if self.verbose:
-                print(f"Create tweet response: {response.text}")
+        if response.status_code != 201:
+            raise Exception(f"{response.status_code} {response.reason} for url: {url}")
 
-            response.raise_for_status()
-            return response.json()
+        return response.json()
 
-        except requests.exceptions.RequestException as e:
-            print(f"Error creating tweet: {e}")
-            raise
-
-    def delete_tweet(self, tweet_id: str) -> bool:
+    def delete_tweet(self, tweet_id: str) -> Dict[str, Any]:
         """
-        Delete a tweet by ID
-
+        Delete a tweet
         Args:
             tweet_id: The ID of the tweet to delete
-
         Returns:
-            bool: True if deletion was successful, False otherwise
-
-        Raises:
-            requests.exceptions.RequestException: If the API request fails
+            Dict containing the API response
         """
-        url = f"{self.base_url}/tweets/{tweet_id}"
+        url = f'https://api.twitter.com/2/tweets/{tweet_id}'
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Content-Type': 'application/json'
+        }
 
-        try:
-            response = requests.delete(
-                url,
-                headers=self._get_auth_header(),
-                timeout=30
-            )
+        response = requests.delete(url, headers=headers)
+        if self.verbose:
+            print(f"Delete tweet response: {response.text}")
 
-            if self.verbose:
-                print(f"Delete tweet response: {response.text}")
+        if response.status_code != 200:
+            raise Exception(f"{response.status_code} {response.reason} for url: {url}")
 
-            response.raise_for_status()
-            return True
-
-        except requests.exceptions.RequestException as e:
-            print(f"Error deleting tweet: {e}")
-            raise
+        return response.json()
 
 if __name__ == "__main__":
     # Example usage

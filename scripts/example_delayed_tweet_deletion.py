@@ -3,10 +3,18 @@ Example script demonstrating Twitter API usage with delayed tweet deletion
 Shows how to post a tweet, wait for a specified duration, then delete it
 """
 
+import os
+import sys
 import time
 from twitter_api import TwitterApiLib
 
 def main():
+    # Check for required environment variables
+    if not all([os.getenv('TWITTER_CLIENT_ID'), os.getenv('TWITTER_CLIENT_SECRET')]):
+        print("Error: Missing required Twitter API credentials")
+        print("Please set TWITTER_CLIENT_ID and TWITTER_CLIENT_SECRET in .env")
+        sys.exit(1)
+
     # Initialize Twitter API client with verbose logging
     twitter = TwitterApiLib(verbose=True)
 
@@ -24,8 +32,8 @@ def main():
 
         # Delete the tweet
         print("Deleting tweet...")
-        deleted = twitter.delete_tweet(tweet_id)
-        print(f"Tweet deleted successfully: {deleted}")
+        response = twitter.delete_tweet(tweet_id)
+        print(f"Tweet deletion response: {response}")
 
     except Exception as e:
         print(f"Error in example script: {e}")
