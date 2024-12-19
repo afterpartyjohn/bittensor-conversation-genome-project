@@ -4,9 +4,6 @@ Implements OAuth 2.0 authentication and basic tweet management functionality
 """
 
 import os
-import base64
-import secrets
-import hashlib
 import requests
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
@@ -21,14 +18,6 @@ TWITTER_CLIENT_ID = os.getenv('TWITTER_CLIENT_ID')
 TWITTER_CLIENT_SECRET = os.getenv('TWITTER_CLIENT_SECRET')
 TWITTER_REDIRECT_URI = os.getenv('TWITTER_REDIRECT_URI', 'http://localhost:8080/callback')
 
-def generate_code_verifier():
-    token = secrets.token_urlsafe(32)
-    return token
-
-def generate_code_challenge(verifier):
-    sha256 = hashlib.sha256(verifier.encode('utf-8')).digest()
-    return base64.urlsafe_b64encode(sha256).decode('utf-8').rstrip('=')
-
 class TwitterApiLib:
     """Twitter API v2 wrapper for internal usage"""
 
@@ -42,10 +31,6 @@ class TwitterApiLib:
         if not all([self.client_id, self.client_secret]):
             raise ValueError("Missing required Twitter API credentials")
 
-        # Generate PKCE values
-        self.code_verifier = generate_code_verifier()
-        self.code_challenge = generate_code_challenge(self.code_verifier)
-
         # Get access token
         self.access_token = self._get_access_token()
 
@@ -54,17 +39,13 @@ class TwitterApiLib:
         Get OAuth 2.0 access token using client credentials flow
         Returns the access token as a string
         """
-        # Basic auth header
-        auth = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode()
-        ).decode()
-
         headers = {
-            'Authorization': f'Basic {auth}',
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
         }
 
         data = {
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
             'grant_type': 'client_credentials',
             'scope': 'tweet.write offline.access'
         }
